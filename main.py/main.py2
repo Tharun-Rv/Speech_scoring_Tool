@@ -1,1 +1,171 @@
+code = '''
+# ==========================
+# Imports and Package Setup
+# ==========================
+import streamlit as st
+from sentence_transformers import SentenceTransformer, util
+import language_tool_python
+from lexical_diversity import lex_div as ld
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import re
+
+# ==========================
+# Initialize Models & Tools
+# ==========================
+semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
+grammar_tool = language_tool_python.LanguageTool('en-US')
+sentiment_analyzer = SentimentIntensityAnalyzer()
+
+# ==========================
+# Keyword Matching Score
+# ==========================
+def score_keywords(text, keywords):
+    text_lower = text.lower()
+    count = sum(1 for kw in keywords if kw in text_lower)
+    return count / max(len(keywords), 1)
+
+# ==========================
+# Semantic Similarity Score
+# ==========================
+def score_semantic(text, criteria_descriptions):
+    text_emb = semantic_model.encode(text, convert_to_tensor=True)
+    desc_emb = semantic_model.encode(criteria_descriptions, convert_to_tensor=True)
+    cosine_scores = util.cos_sim(text_emb, desc_emb)[0].cpu().tolist()
+    return cosine_scores
+
+# ==========================
+# Grammar Error Score
+# ==========================
+def score_grammar(text):
+    matches = grammar_tool.check(text)
+    error_count = sum(1 for m in matches if hasattr(m, 'category') and 'grammar' in m.category.lower())
+    word_count = len(text.split())
+    error_ratio = (error_count / word_count) * 100 if word_count else 0
+    score = 1 - min(error_ratio / 10, 1)
+    return score
+
+# ==========================
+# Vocabulary Richness Score
+# ==========================
+def score_vocab(text):
+    ttr = ld.ttr(text)
+    if ttr >= 0.9:
+        return 1.0
+    elif ttr >= 0.7:
+        return 0.8
+    elif ttr >= 0.5:
+        return 0.6
+    elif ttr >= 0.3:
+        return 0.4
+    else:
+        return 0.2
+
+# ==========================
+# Sentiment Analysis Score
+# ==========================
+def score_sentiment(text):
+    vs = sentiment_analyzer.polarity_scores(text)
+    pos = vs['pos']
+    if pos >= 0.9:
+        return 1.0
+    elif pos >= 0.7:
+        return 0.8
+    elif pos >= 0.5:
+        return 0.6
+    elif pos >= 0.3:
+        return 0.4
+    else:
+        return 0.2
+
+# ==========================
+# Combined Scoring Pipeline
+# ==========================
+def combined_score(transcript, rubric_criteria, alpha_kw=0.6, alpha_sem=0.4):
+    descriptions = [c['description'] for c in rubric_criteria]
+    semantic_scores = score_semantic(transcript, descriptions)
+
+    results = []
+    total_weight = 0
+    weighted_sum = 0
+
+    for i, crit in enumerate(rubric_criteria):
+        kw_score = score_keywords(transcript, crit['keywords'])
+        sem_score = semantic_scores[i]
+
+        combined_crit_score = (alpha_kw * kw_score) + (alpha_sem * sem_score)
+
+        desc_lower = crit['description'].lower()
+        if 'grammar' in desc_lower:
+            combined_crit_score = score_grammar(transcript)
+        elif 'vocabulary' in desc_lower:
+            combined_crit_score = score_vocab(transcript)
+        elif 'sentiment' in desc_lower:
+            combined_crit_score = score_sentiment(transcript)
+
+        weighted_score = combined_crit_score * crit['weight']
+        weighted_sum += weighted_score
+        total_weight += crit['weight']
+
+        results.append({
+            'description': crit['description'],
+            'score': round(weighted_score, 2),
+            'weight': crit['weight'],
+            'keyword_score': round(kw_score, 2),
+            'semantic_score': round(sem_score, 2) if desc_lower not in ['grammar', 'vocabulary', 'sentiment'] else 'N/A',
+            'combined_score': round(combined_crit_score, 2)
+        })
+    overall_score = round((weighted_sum / total_weight) * 100, 2) if total_weight else 0
+
+    return results, overall_score
+
+# ==========================
+# Streamlit App Interface
+# ==========================
+def main():
+    st.title("Intern Case Study Scoring Tool")
+
+    transcript = st.text_area("Paste the transcript text here", height=200)
+
+    if st.button("Score Transcript"):
+        if not transcript.strip():
+            st.warning("Please enter transcript text.")
+            return
+
+        rubric_criteria = [
+            {'description': 'Key word Presence', 'keywords': ['name', 'age', 'class', 'school', 'family', 'hobbies'], 'weight': 30},
+            {'description': 'Flow', 'keywords': ['salutation', 'name', 'mandatory details', 'optional details', 'closing'], 'weight': 5},
+            {'description': 'Speech Rate', 'keywords': [], 'weight': 10},
+            {'description': 'Grammar Errors', 'keywords': [], 'weight': 10},
+            {'description': 'Vocabulary Richness', 'keywords': [], 'weight': 10},
+            {'description': 'Filler Word Rate', 'keywords': ['um', 'uh', 'like', 'you know', 'so', 'actually'], 'weight': 15},
+            {'description': 'Sentiment', 'keywords': [], 'weight': 15},
+        ]
+
+        results, overall = combined_score(transcript, rubric_criteria)
+
+        st.subheader("Detailed Scores")
+        for r in results:
+            st.write(f"**{r['description']}**")
+            st.write(f"Score: {r['score']} / Weight: {r['weight']}")
+            st.write(f"Keywords matched ratio: {r['keyword_score']}")
+            st.write(f"Semantic score: {r['semantic_score']}")
+            st.write(f"Combined normalized score: {r['combined_score']}")
+            st.write("---")
+
+        st.subheader("Overall Score")
+        st.write(f"**{overall} / 100**")
+
+if __name__ == "__main__":
+    main()
+
+
+import streamlit as st
+st.title("Test Streamlit App")
+st.write("Hello, world!")
+'''
+
+with open('app.py', 'w') as f:
+    f.write(code)
+
+print("Minimal app.py saved!")
 
